@@ -1,0 +1,93 @@
+// src/components/Dashboard.jsx
+import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "../AuthContext";
+import { supabase } from "../supabaseClient";
+import ChatWindow from "./dashboard/ChatWindow";
+import Sidebar from "./dashboard/Sidebar";
+
+export default function Dashboard() {
+  const { user, profile, signOut } = useAuth();
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [onlineUsers, setOnlineUsers] = useState(new Set());
+  const [recentChats, setRecentChats] = useState([]);
+
+  const fetchChats = useCallback(async () => {
+    const { data, error } = await supabase.rpc("get_recent_chats");
+    if (!error) setRecentChats(data || []);
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const initialLoad = async () => {
+      if (isMounted) await fetchChats();
+    };
+    initialLoad();
+
+    const globalChannel = supabase
+      .channel("global_app")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "messages" },
+        () => {
+          if (isMounted) fetchChats();
+        },
+      )
+      .on("presence", { event: "sync" }, () => {
+        const newState = globalChannel.presenceState();
+        const onlineIds = new Set();
+        for (const id in newState) {
+          if (newState[id]?.[0]?.user_id)
+            onlineIds.add(newState[id][0].user_id);
+        }
+        if (isMounted) setOnlineUsers(onlineIds);
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED" && isMounted) {
+          await globalChannel.track({
+            user_id: user.id,
+            online_at: new Date().toISOString(),
+          });
+        }
+      });
+
+    const updateLastSeen = () => {
+      if (user?.id)
+        supabase
+          .from("profiles")
+          .update({ last_seen: new Date() })
+          .eq("id", user.id)
+          .then();
+    };
+    window.addEventListener("beforeunload", updateLastSeen);
+
+    return () => {
+      isMounted = false;
+      updateLastSeen();
+      window.removeEventListener("beforeunload", updateLastSeen);
+      supabase.removeChannel(globalChannel);
+    };
+  }, [user.id, fetchChats]);
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-white">
+      <Sidebar
+        user={user}
+        profile={profile}
+        signOut={signOut}
+        recentChats={recentChats}
+        onlineUsers={onlineUsers}
+        selectedUser={selectedUser}
+        onSelectUser={setSelectedUser}
+      />
+
+      <ChatWindow
+        user={user}
+        selectedUser={selectedUser}
+        setSelectedUser={setSelectedUser}
+        onlineUsers={onlineUsers}
+        refreshChats={fetchChats}
+      />
+    </div>
+  );
+}
