@@ -1,6 +1,7 @@
 // src/components/Dashboard.jsx
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../AuthContext";
+import { usePushNotifications } from "../hooks/usePushNotifications";
 import { supabase } from "../supabaseClient";
 import ChatWindow from "./dashboard/ChatWindow";
 import Sidebar from "./dashboard/Sidebar";
@@ -10,6 +11,27 @@ export default function Dashboard() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [recentChats, setRecentChats] = useState([]);
+
+  const handleNotificationTap = async (senderId) => {
+    if (selectedUser?.id === senderId) return;
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", senderId)
+      .single();
+
+    if (!error && data) {
+      setSelectedUser({
+        id: data.id,
+        username: data.username,
+        avatar_url: data.avatar_url,
+        last_seen: data.last_seen,
+      });
+    }
+  };
+
+  usePushNotifications(user, handleNotificationTap);
 
   const fetchChats = useCallback(async () => {
     const { data, error } = await supabase.rpc("get_recent_chats");

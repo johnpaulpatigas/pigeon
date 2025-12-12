@@ -14,6 +14,8 @@
     "@capacitor/app": "^8.0.0",
     "@capacitor/cli": "^8.0.0",
     "@capacitor/core": "^8.0.0",
+    "@capacitor/local-notifications": "^8.0.0",
+    "@capacitor/push-notifications": "^8.0.0",
     "@capacitor/status-bar": "^8.0.0",
     "@capawesome/capacitor-android-edge-to-edge-support": "^7.2.3",
     "@capgo/capacitor-social-login": "^7.20.0",
@@ -36,6 +38,7 @@
     "globals": "^16.5.0",
     "prettier": "^3.7.4",
     "prettier-plugin-tailwindcss": "^0.7.2",
+    "supabase": "^2.65.10",
     "vite": "npm:rolldown-vite@7.2.5"
   },
   "overrides": {
