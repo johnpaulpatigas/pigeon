@@ -1,4 +1,6 @@
 // src/components/dashboard/ChatWindow.jsx
+import { Capacitor } from "@capacitor/core";
+import { Keyboard } from "@capacitor/keyboard";
 import { ArrowLeft, Check, Edit2, MessageSquare, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../../supabaseClient";
@@ -24,9 +26,34 @@ export default function ChatWindow({
   const activeChannelRef = useRef(null);
   const lastTypingSentRef = useRef(0);
 
+  const scrollToBottom = (behavior = "smooth") => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({
+        behavior: behavior,
+        block: "end",
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const showListener = Keyboard.addListener("keyboardDidShow", () => {
+      scrollToBottom("auto");
+    });
+
+    const hideListener = Keyboard.addListener("keyboardDidHide", () => {
+      scrollToBottom("smooth");
+    });
+
+    return () => {
+      showListener.remove();
+      hideListener.remove();
+    };
+  }, []);
+
   useEffect(() => {
     if (!selectedUser) return;
-
     let channel = null;
 
     const initializeChat = async () => {
@@ -128,7 +155,7 @@ export default function ChatWindow({
   }, [selectedUser, user.id, refreshChats]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollToBottom("smooth");
   }, [messages, editingMessage, isTyping]);
 
   const handleTyping = (e) => {
@@ -167,6 +194,8 @@ export default function ChatWindow({
 
     setNewMessage("");
     setIsTyping(false);
+
+    setTimeout(() => scrollToBottom("smooth"), 50);
 
     const tempId = Math.random().toString();
     const optimisticMsg = {
@@ -273,7 +302,7 @@ export default function ChatWindow({
         </div>
       </div>
 
-      <div className="scrollbar-thin flex-1 space-y-3 overflow-y-auto bg-white p-4">
+      <div className="scrollbar-thin flex-1 space-y-3 overflow-y-auto bg-white px-4 pt-4">
         {messages.length === 0 && (
           <div className="mt-10 text-center">
             <div className="mb-2 inline-block rounded-full bg-blue-50 p-4 text-blue-500">
@@ -294,7 +323,7 @@ export default function ChatWindow({
         ))}
 
         {isTyping && <TypingBubble />}
-        <div ref={messagesEndRef} />
+        <div className="h-2" ref={messagesEndRef} />
       </div>
 
       <div className="border-t border-gray-100 bg-white p-4 pb-6">
