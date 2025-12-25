@@ -1,4 +1,5 @@
 // src/components/Dashboard.jsx
+import { App as CapacitorApp } from "@capacitor/app";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../AuthContext";
 import { usePushNotifications } from "../hooks/usePushNotifications";
@@ -73,20 +74,43 @@ export default function Dashboard() {
         }
       });
 
-    const updateLastSeen = () => {
-      if (user?.id)
-        supabase
+    const updateLastSeen = async () => {
+      if (user?.id) {
+        await supabase
           .from("profiles")
           .update({ last_seen: new Date() })
-          .eq("id", user.id)
-          .then();
+          .eq("id", user.id);
+      }
     };
+
+    const appListener = CapacitorApp.addListener(
+      "appStateChange",
+      async ({ isActive }) => {
+        if (!isActive) {
+          await updateLastSeen();
+        } else {
+          if (
+            globalChannel.state === "closed" ||
+            globalChannel.state === "errored"
+          ) {
+            globalChannel.subscribe();
+          } else {
+            globalChannel.track({
+              user_id: user.id,
+              online_at: new Date().toISOString(),
+            });
+          }
+        }
+      },
+    );
+
     window.addEventListener("beforeunload", updateLastSeen);
 
     return () => {
       isMounted = false;
       updateLastSeen();
       window.removeEventListener("beforeunload", updateLastSeen);
+      appListener.then((handler) => handler.remove());
       supabase.removeChannel(globalChannel);
     };
   }, [user.id, fetchChats]);
