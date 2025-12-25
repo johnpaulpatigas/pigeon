@@ -1,7 +1,15 @@
 // src/components/dashboard/ChatWindow.jsx
 import { Capacitor } from "@capacitor/core";
 import { Keyboard } from "@capacitor/keyboard";
-import { ArrowLeft, Check, Edit2, MessageSquare, Send, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  Edit2,
+  MessageSquare,
+  Send,
+  X,
+  Reply,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import { formatTime, getChatRoomId } from "../../utils/helpers";
@@ -19,12 +27,14 @@ export default function ChatWindow({
   const [newMessage, setNewMessage] = useState("");
   const [editingMessage, setEditingMessage] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [replyingTo, setReplyingTo] = useState(null);
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const activeChannelRef = useRef(null);
   const lastTypingSentRef = useRef(0);
+  const optimisticIds = useRef(new Set());
 
   const scrollToBottom = (behavior = "smooth") => {
     if (messagesEndRef.current) {
@@ -62,6 +72,8 @@ export default function ChatWindow({
       setNewMessage("");
       setIsTyping(false);
       activeChannelRef.current = null;
+
+      optimisticIds.current.clear();
 
       await supabase.from("conversation_reads").upsert(
         {
@@ -156,7 +168,12 @@ export default function ChatWindow({
 
   useEffect(() => {
     scrollToBottom("smooth");
-  }, [messages, editingMessage, isTyping]);
+  }, [messages, editingMessage, isTyping, replyingTo]);
+
+  const handleSwipeReply = (msg) => {
+    setReplyingTo(msg);
+    inputRef.current?.focus();
+  };
 
   const handleTyping = (e) => {
     setNewMessage(e.target.value);
@@ -193,6 +210,7 @@ export default function ChatWindow({
     }
 
     setNewMessage("");
+    setReplyingTo(null);
     setIsTyping(false);
 
     setTimeout(() => scrollToBottom("smooth"), 50);
@@ -205,12 +223,18 @@ export default function ChatWindow({
       receiver_id: selectedUser.id,
       created_at: new Date().toISOString(),
       isOptimistic: true,
+      reply_to_id: replyingTo?.id,
     };
     setMessages((prev) => [...prev, optimisticMsg]);
 
     const { data, error } = await supabase
       .from("messages")
-      .insert({ content, sender_id: user.id, receiver_id: selectedUser.id })
+      .insert({
+        content,
+        sender_id: user.id,
+        receiver_id: selectedUser.id,
+        reply_to_id: replyingTo?.id,
+      })
       .select()
       .single();
 
@@ -218,7 +242,15 @@ export default function ChatWindow({
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       alert("Failed to send");
     } else {
-      setMessages((prev) => prev.map((m) => (m.id === tempId ? data : m)));
+      setMessages((prev) => {
+        const alreadyHasReal = prev.some((m) => m.id === data.id);
+
+        if (alreadyHasReal) {
+          return prev.filter((m) => m.id !== tempId);
+        } else {
+          return prev.map((m) => (m.id === tempId ? data : m));
+        }
+      });
     }
   };
 
@@ -271,7 +303,7 @@ export default function ChatWindow({
 
   return (
     <div className="relative flex h-full flex-1 flex-col bg-white">
-      <div className="sticky top-0 z-20 flex items-center justify-between border-b border-gray-100 bg-white/90 p-4 shadow-sm backdrop-blur-md">
+      <div className="sticky top-0 z-20 flex items-center justify-between border-b border-gray-100 bg-white/90 p-4">
         <div className="flex items-center">
           <button
             onClick={() => setSelectedUser(null)}
@@ -303,25 +335,23 @@ export default function ChatWindow({
       </div>
 
       <div className="scrollbar-thin flex-1 space-y-3 overflow-y-auto bg-white px-4 pt-4">
-        {messages.length === 0 && (
-          <div className="mt-10 text-center">
-            <div className="mb-2 inline-block rounded-full bg-blue-50 p-4 text-blue-500">
-              <MessageSquare size={24} />
-            </div>
-            <p className="text-sm text-gray-400">No messages yet. Say hello!</p>
-          </div>
-        )}
+        {messages.map((msg) => {
+          const parentMsg = msg.reply_to_id
+            ? messages.find((m) => m.id === msg.reply_to_id)
+            : null;
 
-        {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            msg={msg}
-            isMe={msg.sender_id === user.id}
-            onDelete={deleteMessage}
-            onEditTrigger={handleEditTrigger}
-          />
-        ))}
-
+          return (
+            <MessageBubble
+              key={msg.id}
+              msg={msg}
+              isMe={msg.sender_id === user.id}
+              onDelete={deleteMessage}
+              onEditTrigger={handleEditTrigger}
+              onSwipeReply={handleSwipeReply}
+              parentMsg={parentMsg}
+            />
+          );
+        })}
         {isTyping && <TypingBubble />}
         <div className="h-2" ref={messagesEndRef} />
       </div>
@@ -344,16 +374,43 @@ export default function ChatWindow({
             </button>
           </div>
         )}
+
+        {replyingTo && !editingMessage && (
+          <div className="animate-in fade-in slide-in-from-bottom-2 mb-2 flex items-center justify-between rounded-2xl border-l-4 border-blue-500 bg-gray-100 px-4 py-2 text-sm text-gray-700">
+            <div className="flex flex-col overflow-hidden">
+              <span className="text-xs font-bold text-blue-500">
+                Replying to{" "}
+                {replyingTo.sender_id === user.id
+                  ? "yourself"
+                  : `@${selectedUser.username}`}
+              </span>
+              <span className="truncate text-xs opacity-70">
+                {replyingTo.content}
+              </span>
+            </div>
+            <button
+              onClick={() => setReplyingTo(null)}
+              className="rounded-full p-1 text-gray-500 hover:bg-gray-200"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <input
             ref={inputRef}
             className={`flex-1 rounded-full bg-gray-100 px-5 py-3.5 transition-all outline-none focus:ring-4 ${
               editingMessage
-                ? "bg-yellow-50 text-yellow-900 placeholder-yellow-700/50 focus:ring-yellow-100"
+                ? "bg-yellow-50 focus:ring-yellow-100"
                 : "border border-transparent focus:border-blue-500 focus:bg-white focus:ring-blue-50/50"
             }`}
             placeholder={
-              editingMessage ? "Edit your message..." : "Coo something..."
+              replyingTo
+                ? "Type your reply..."
+                : editingMessage
+                  ? "Edit your message..."
+                  : "Coo something..."
             }
             value={newMessage}
             onChange={handleTyping}
