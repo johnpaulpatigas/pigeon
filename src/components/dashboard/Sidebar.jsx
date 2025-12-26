@@ -48,7 +48,7 @@ export default function Sidebar({
 
   return (
     <div
-      className={`${selectedUser ? "hidden md:flex" : "flex"} w-full flex-col border-r border-gray-100 bg-white md:w-80`}
+      className={`${selectedUser ? "hidden md:flex" : "flex"} h-full w-full flex-col border-r border-gray-100 bg-white md:w-80`}
     >
       <div className="z-10 flex items-center justify-between px-6 py-5">
         <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-blue-500">

@@ -1,6 +1,7 @@
 // src/components/Dashboard.jsx
 import { App as CapacitorApp } from "@capacitor/app";
 import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { usePushNotifications } from "../hooks/usePushNotifications";
 import { supabase } from "../supabaseClient";
@@ -9,27 +10,24 @@ import Sidebar from "./dashboard/Sidebar";
 
 export default function Dashboard() {
   const { user, profile, signOut } = useAuth();
-  const [selectedUser, setSelectedUser] = useState(null);
+  const { id: routeChatId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [fetchedUser, setFetchedUser] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [recentChats, setRecentChats] = useState([]);
 
+  const selectedUser = (() => {
+    if (!routeChatId) return null;
+    if (location.state?.user?.id === routeChatId) return location.state.user;
+    if (fetchedUser?.id === routeChatId) return fetchedUser;
+    return null;
+  })();
+
   const handleNotificationTap = async (senderId) => {
     if (selectedUser?.id === senderId) return;
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", senderId)
-      .single();
-
-    if (!error && data) {
-      setSelectedUser({
-        id: data.id,
-        username: data.username,
-        avatar_url: data.avatar_url,
-        last_seen: data.last_seen,
-      });
-    }
+    navigate(`/chat/${senderId}`);
   };
 
   usePushNotifications(user, handleNotificationTap);
@@ -38,6 +36,32 @@ export default function Dashboard() {
     const { data, error } = await supabase.rpc("get_recent_chats");
     if (!error) setRecentChats(data || []);
   }, []);
+
+  useEffect(() => {
+    if (
+      routeChatId &&
+      !location.state?.user &&
+      fetchedUser?.id !== routeChatId
+    ) {
+      const fetchUser = async () => {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", routeChatId)
+          .single();
+
+        if (!error && data) {
+          setFetchedUser({
+            id: data.id,
+            username: data.username,
+            avatar_url: data.avatar_url,
+            last_seen: data.last_seen,
+          });
+        }
+      };
+      fetchUser();
+    }
+  }, [routeChatId, location.state?.user, fetchedUser?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -115,25 +139,41 @@ export default function Dashboard() {
     };
   }, [user.id, fetchChats]);
 
-  return (
-    <div className="flex h-screen overflow-hidden bg-white">
-      <Sidebar
-        user={user}
-        profile={profile}
-        signOut={signOut}
-        recentChats={recentChats}
-        onlineUsers={onlineUsers}
-        selectedUser={selectedUser}
-        onSelectUser={setSelectedUser}
-      />
+  const handleSelectUser = (u) => {
+    navigate(`/chat/${u.id || u.user_id}`, { state: { user: u } });
+  };
 
-      <ChatWindow
-        user={user}
-        selectedUser={selectedUser}
-        setSelectedUser={setSelectedUser}
-        onlineUsers={onlineUsers}
-        refreshChats={fetchChats}
-      />
+  const handleBack = () => {
+    navigate("/");
+  };
+
+  return (
+    <div className="fixed inset-0 flex overflow-hidden bg-white">
+      <div
+        className={`${routeChatId ? "hidden md:flex" : "flex"} h-full w-full flex-col md:w-80`}
+      >
+        <Sidebar
+          user={user}
+          profile={profile}
+          signOut={signOut}
+          recentChats={recentChats}
+          onlineUsers={onlineUsers}
+          selectedUser={selectedUser}
+          onSelectUser={handleSelectUser}
+        />
+      </div>
+
+      <div
+        className={`${!routeChatId ? "hidden md:flex" : "flex"} h-full flex-1`}
+      >
+        <ChatWindow
+          user={user}
+          selectedUser={selectedUser}
+          setSelectedUser={handleBack}
+          onlineUsers={onlineUsers}
+          refreshChats={fetchChats}
+        />
+      </div>
     </div>
   );
 }
