@@ -1,9 +1,11 @@
 // src/components/dashboard/MessageBubble.jsx
 /* eslint-disable no-unused-vars */
-import { Edit2, MoreVertical, Reply, Trash2 } from "lucide-react";
+import { Edit2, MoreVertical, Reply, Smile, Trash2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"];
 
 export default function MessageBubble({
   msg,
@@ -11,25 +13,37 @@ export default function MessageBubble({
   onDelete,
   onEditTrigger,
   onSwipeReply,
+  onReact,
+  currentUserId,
   parentMsg,
 }) {
   const [menuPosition, setMenuPosition] = useState(null);
+  const [pickerPosition, setPickerPosition] = useState(null);
   const [isHovered, setIsHovered] = useState(false);
   const buttonRef = useRef(null);
 
+  const groupedReactions = (msg.reactions || []).reduce((acc, r) => {
+    if (!acc[r.emoji]) acc[r.emoji] = [];
+    acc[r.emoji].push(r);
+    return acc;
+  }, {});
+
   useEffect(() => {
-    const closeMenu = () => setMenuPosition(null);
-    if (menuPosition) {
-      window.addEventListener("click", closeMenu);
-      window.addEventListener("scroll", closeMenu, { capture: true });
-      window.addEventListener("resize", closeMenu);
+    const closeAll = () => {
+      setMenuPosition(null);
+      setPickerPosition(null);
+    };
+    if (menuPosition || pickerPosition) {
+      window.addEventListener("click", closeAll);
+      window.addEventListener("scroll", closeAll, { capture: true });
+      window.addEventListener("resize", closeAll);
     }
     return () => {
-      window.removeEventListener("click", closeMenu);
-      window.removeEventListener("scroll", closeMenu, { capture: true });
-      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("click", closeAll);
+      window.removeEventListener("scroll", closeAll, { capture: true });
+      window.removeEventListener("resize", closeAll);
     };
-  }, [menuPosition]);
+  }, [menuPosition, pickerPosition]);
 
   const handleMenuClick = (e) => {
     e.stopPropagation();
@@ -41,7 +55,21 @@ export default function MessageBubble({
         top: rect.bottom + 5,
         left: rect.left,
         alignRight: isMe,
+        rect: rect,
       });
+    }
+  };
+
+  const handleReactClick = (e) => {
+    e.stopPropagation();
+    if (menuPosition && menuPosition.rect) {
+      setPickerPosition({
+        bottom: window.innerHeight - menuPosition.rect.top + 10,
+        left: menuPosition.alignRight
+          ? menuPosition.rect.right - 200
+          : menuPosition.rect.left,
+      });
+      setMenuPosition(null);
     }
   };
 
@@ -102,17 +130,21 @@ export default function MessageBubble({
           )}
 
           <div className="relative">
-            {isMe && !msg.isOptimistic && (
+            {!msg.isOptimistic && (
               <div
-                className={`absolute top-1/2 -left-10 flex -translate-y-1/2 items-center justify-center transition-opacity duration-200 ${
-                  isHovered || menuPosition ? "opacity-100" : "opacity-0"
+                className={`absolute top-1/2 ${
+                  isMe ? "-left-10" : "-right-10"
+                } flex -translate-y-1/2 items-center justify-center transition-opacity duration-200 ${
+                  isHovered || menuPosition || pickerPosition
+                    ? "opacity-100"
+                    : "opacity-0"
                 }`}
               >
                 <button
                   ref={buttonRef}
                   onClick={handleMenuClick}
                   className={`rounded-full p-1.5 transition-colors ${
-                    menuPosition
+                    menuPosition || pickerPosition
                       ? "bg-gray-200 text-gray-800"
                       : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                   }`}
@@ -141,6 +173,38 @@ export default function MessageBubble({
                 </span>
               )}
             </div>
+
+            {Object.keys(groupedReactions).length > 0 && (
+              <div
+                className={`absolute -bottom-3 flex gap-1 ${
+                  isMe ? "right-0" : "left-0"
+                }`}
+              >
+                <div className="flex gap-1 rounded-full bg-white p-0.5 shadow-sm ring-1 ring-gray-100">
+                  {Object.entries(groupedReactions).map(([emoji, users]) => {
+                    const iReacted = users.some(
+                      (u) => u.user_id === currentUserId,
+                    );
+                    return (
+                      <button
+                        key={emoji}
+                        onClick={() => onReact(msg.id, emoji)}
+                        className={`flex min-w-6 items-center justify-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] transition-colors ${
+                          iReacted
+                            ? "bg-blue-100 text-blue-800"
+                            : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                        }`}
+                      >
+                        <span>{emoji}</span>
+                        {users.length > 1 && (
+                          <span className="font-bold">{users.length}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </motion.div>
       </div>
@@ -148,33 +212,81 @@ export default function MessageBubble({
       {menuPosition &&
         createPortal(
           <div
-            className="animate-in fade-in zoom-in-95 fixed z-9999 flex w-32 flex-col overflow-hidden rounded-lg border border-gray-100 bg-white text-sm shadow-xl duration-100"
+            className="animate-in fade-in zoom-in-95 fixed z-9999 flex w-36 flex-col overflow-hidden rounded-lg border border-gray-100 bg-white text-sm shadow-xl duration-100"
             style={{
               top: menuPosition.top,
               left: menuPosition.alignRight
-                ? menuPosition.left - 90
+                ? menuPosition.left - 110
                 : menuPosition.left,
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <button
-              onClick={() => {
-                onEditTrigger(msg);
-                setMenuPosition(null);
-              }}
-              className="flex items-center gap-2 px-4 py-2.5 text-left text-gray-700 transition-colors hover:bg-gray-50"
+              onClick={handleReactClick}
+              className="flex items-center gap-3 border-b border-gray-50 px-4 py-2.5 text-left text-gray-700 transition-colors hover:bg-gray-50"
             >
-              <Edit2 size={14} /> Edit
+              <Smile size={15} className="text-blue-500" /> React
             </button>
-            <button
-              onClick={() => {
-                onDelete(msg.id);
-                setMenuPosition(null);
-              }}
-              className="flex items-center gap-2 px-4 py-2.5 text-left text-red-600 transition-colors hover:bg-red-50"
-            >
-              <Trash2 size={14} /> Delete
-            </button>
+
+            {isMe && (
+              <>
+                <button
+                  onClick={() => {
+                    onEditTrigger(msg);
+                    setMenuPosition(null);
+                  }}
+                  className="flex items-center gap-3 px-4 py-2.5 text-left text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  <Edit2 size={15} /> Edit
+                </button>
+                <button
+                  onClick={() => {
+                    onDelete(msg.id);
+                    setMenuPosition(null);
+                  }}
+                  className="flex items-center gap-3 px-4 py-2.5 text-left text-red-600 transition-colors hover:bg-red-50"
+                >
+                  <Trash2 size={15} /> Delete
+                </button>
+              </>
+            )}
+            {!isMe && (
+              <button
+                onClick={() => {
+                  onSwipeReply(msg);
+                  setMenuPosition(null);
+                }}
+                className="flex items-center gap-3 px-4 py-2.5 text-left text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                <Reply size={15} /> Reply
+              </button>
+            )}
+          </div>,
+          document.body,
+        )}
+
+      {pickerPosition &&
+        createPortal(
+          <div
+            className="animate-in fade-in slide-in-from-bottom-2 fixed z-9999 flex gap-1 rounded-full bg-white p-1.5 shadow-xl ring-1 ring-black/5 duration-200"
+            style={{
+              bottom: pickerPosition.bottom,
+              left: pickerPosition.left,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {QUICK_REACTIONS.map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => {
+                  onReact(msg.id, emoji);
+                  setPickerPosition(null);
+                }}
+                className="cursor-pointer p-1.5 text-xl transition-transform hover:scale-125"
+              >
+                {emoji}
+              </button>
+            ))}
           </div>,
           document.body,
         )}

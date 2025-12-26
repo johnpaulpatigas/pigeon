@@ -1,15 +1,7 @@
 // src/components/dashboard/ChatWindow.jsx
 import { Capacitor } from "@capacitor/core";
 import { Keyboard } from "@capacitor/keyboard";
-import {
-  ArrowLeft,
-  Check,
-  Edit2,
-  MessageSquare,
-  Send,
-  X,
-  Reply,
-} from "lucide-react";
+import { ArrowLeft, Check, Edit2, MessageSquare, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import { formatTime, getChatRoomId } from "../../utils/helpers";
@@ -47,19 +39,10 @@ export default function ChatWindow({
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-
-    const showListener = Keyboard.addListener("keyboardDidShow", () => {
-      scrollToBottom("auto");
-    });
-
-    const hideListener = Keyboard.addListener("keyboardDidHide", () => {
-      scrollToBottom("smooth");
-    });
-
-    return () => {
-      showListener.remove();
-      hideListener.remove();
-    };
+    const showListener = Keyboard.addListener("keyboardDidShow", () =>
+      scrollToBottom("auto"),
+    );
+    return () => showListener.remove();
   }, []);
 
   useEffect(() => {
@@ -69,6 +52,7 @@ export default function ChatWindow({
     const initializeChat = async () => {
       setMessages([]);
       setEditingMessage(null);
+      setReplyingTo(null);
       setNewMessage("");
       setIsTyping(false);
       activeChannelRef.current = null;
@@ -88,7 +72,7 @@ export default function ChatWindow({
 
       const { data } = await supabase
         .from("messages")
-        .select("*")
+        .select("*, reactions(*)")
         .or(
           `and(sender_id.eq.${user.id},receiver_id.eq.${selectedUser.id}),and(sender_id.eq.${selectedUser.id},receiver_id.eq.${user.id})`,
         )
@@ -106,6 +90,7 @@ export default function ChatWindow({
           (payload) => {
             if (payload.eventType === "INSERT") {
               const msg = payload.new;
+              msg.reactions = [];
               const isRelated =
                 (msg.sender_id === user.id &&
                   msg.receiver_id === selectedUser.id) ||
@@ -134,12 +119,50 @@ export default function ChatWindow({
             }
             if (payload.eventType === "UPDATE")
               setMessages((prev) =>
-                prev.map((m) => (m.id === payload.new.id ? payload.new : m)),
+                prev.map((m) =>
+                  m.id === payload.new.id ? { ...m, ...payload.new } : m,
+                ),
               );
             if (payload.eventType === "DELETE")
               setMessages((prev) =>
                 prev.filter((m) => m.id !== payload.old.id),
               );
+          },
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "reactions" },
+          (payload) => {
+            if (payload.eventType === "INSERT") {
+              const newReaction = payload.new;
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.id === newReaction.message_id) {
+                    return {
+                      ...msg,
+                      reactions: [...(msg.reactions || []), newReaction],
+                    };
+                  }
+                  return msg;
+                }),
+              );
+            }
+            if (payload.eventType === "DELETE") {
+              const oldReaction = payload.old;
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.reactions?.some((r) => r.id === oldReaction.id)) {
+                    return {
+                      ...msg,
+                      reactions: msg.reactions.filter(
+                        (r) => r.id !== oldReaction.id,
+                      ),
+                    };
+                  }
+                  return msg;
+                }),
+              );
+            }
           },
         )
         .on("broadcast", { event: "typing" }, (payload) => {
@@ -169,6 +192,54 @@ export default function ChatWindow({
   useEffect(() => {
     scrollToBottom("smooth");
   }, [messages, editingMessage, isTyping, replyingTo]);
+
+  const handleReaction = async (msgId, emoji) => {
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id === msgId) {
+          const currentReactions = msg.reactions || [];
+          const existing = currentReactions.find(
+            (r) => r.user_id === user.id && r.emoji === emoji,
+          );
+
+          if (existing) {
+            return {
+              ...msg,
+              reactions: currentReactions.filter((r) => r.id !== existing.id),
+            };
+          } else {
+            return {
+              ...msg,
+              reactions: [
+                ...currentReactions,
+                {
+                  id: Math.random(),
+                  message_id: msgId,
+                  user_id: user.id,
+                  emoji,
+                },
+              ],
+            };
+          }
+        }
+        return msg;
+      }),
+    );
+
+    const { data: existing } = await supabase
+      .from("reactions")
+      .select("id")
+      .match({ message_id: msgId, user_id: user.id, emoji })
+      .maybeSingle();
+
+    if (existing) {
+      await supabase.from("reactions").delete().eq("id", existing.id);
+    } else {
+      await supabase
+        .from("reactions")
+        .insert({ message_id: msgId, user_id: user.id, emoji });
+    }
+  };
 
   const handleSwipeReply = (msg) => {
     setReplyingTo(msg);
@@ -224,6 +295,7 @@ export default function ChatWindow({
       created_at: new Date().toISOString(),
       isOptimistic: true,
       reply_to_id: replyingTo?.id,
+      reactions: [],
     };
     setMessages((prev) => [...prev, optimisticMsg]);
 
@@ -244,12 +316,10 @@ export default function ChatWindow({
     } else {
       setMessages((prev) => {
         const alreadyHasReal = prev.some((m) => m.id === data.id);
-
-        if (alreadyHasReal) {
-          return prev.filter((m) => m.id !== tempId);
-        } else {
-          return prev.map((m) => (m.id === tempId ? data : m));
-        }
+        if (alreadyHasReal) return prev.filter((m) => m.id !== tempId);
+        return prev.map((m) =>
+          m.id === tempId ? { ...data, reactions: [] } : m,
+        );
       });
     }
   };
@@ -348,6 +418,8 @@ export default function ChatWindow({
               onDelete={deleteMessage}
               onEditTrigger={handleEditTrigger}
               onSwipeReply={handleSwipeReply}
+              onReact={handleReaction}
+              currentUserId={user.id}
               parentMsg={parentMsg}
             />
           );
@@ -400,11 +472,7 @@ export default function ChatWindow({
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <input
             ref={inputRef}
-            className={`flex-1 rounded-full bg-gray-100 px-5 py-3.5 transition-all outline-none focus:ring-4 ${
-              editingMessage
-                ? "bg-yellow-50 focus:ring-yellow-100"
-                : "border border-transparent focus:border-blue-500 focus:bg-white focus:ring-blue-50/50"
-            }`}
+            className={`flex-1 rounded-full bg-gray-100 px-5 py-3.5 transition-all outline-none focus:ring-4 ${editingMessage ? "bg-yellow-50 focus:ring-yellow-100" : "border border-transparent focus:border-blue-500 focus:bg-white focus:ring-blue-50/50"}`}
             placeholder={
               replyingTo
                 ? "Type your reply..."
@@ -418,11 +486,7 @@ export default function ChatWindow({
           <button
             type="submit"
             disabled={!newMessage.trim()}
-            className={`rounded-full p-3.5 shadow-sm transition-all ${
-              editingMessage
-                ? "bg-blue-500 text-white hover:bg-blue-600 hover:shadow-md"
-                : "bg-blue-500 text-white hover:bg-blue-600 hover:shadow-md disabled:bg-gray-200 disabled:text-gray-400 disabled:opacity-50 disabled:shadow-none"
-            }`}
+            className={`rounded-full p-3.5 shadow-sm transition-all ${editingMessage ? "bg-blue-500 text-white hover:bg-blue-600 hover:shadow-md" : "bg-blue-500 text-white hover:bg-blue-600 hover:shadow-md disabled:bg-gray-200 disabled:text-gray-400 disabled:opacity-50 disabled:shadow-none"}`}
           >
             {editingMessage ? <Check size={20} /> : <Send size={20} />}
           </button>
